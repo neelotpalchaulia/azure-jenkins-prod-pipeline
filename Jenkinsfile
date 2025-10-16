@@ -54,12 +54,14 @@ pipeline {
 
     stage('Deploy Staging') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'acr-creds', usernameVariable: 'ACR_USER', passwordVariable: 'ACR_PASS')]) {
-          sshagent(credentials: ['deploy-ssh']) {
-            // login remotely and then pipe the run_remote script to the remote host
-            sh ('''echo "$ACR_PASS" | ssh -o StrictHostKeyChecking=no azureuser@''' + "${DEPLOY_IP}" + ''' docker login ''' + "${ACR}" + ''' -u "$ACR_USER" --password-stdin''')
-            sh ('''ssh -o StrictHostKeyChecking=no azureuser@''' + "${DEPLOY_IP}" + ''' 'bash -s' < scripts/run_remote.sh ''' + "${APP}-staging ${IMAGE_SHA} 8081")
-          }
+        withCredentials([
+          usernamePassword(credentialsId: 'acr-creds', usernameVariable: 'ACR_USER', passwordVariable: 'ACR_PASS'),
+          // use sshUserPrivateKey so we can pass a private key file to ssh (-i) without requiring the ssh-agent plugin
+          sshUserPrivateKey(credentialsId: 'deploy-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
+        ]) {
+          // login remotely and then pipe the run_remote script to the remote host using the temporary key file
+          sh ('''echo "$ACR_PASS" | ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@''' + "${DEPLOY_IP}" + ''' docker login ''' + "${ACR}" + ''' -u "$ACR_USER" --password-stdin''')
+          sh ('''ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@''' + "${DEPLOY_IP}" + ''' 'bash -s' < scripts/run_remote.sh ''' + "${APP}-staging ${IMAGE_SHA} 8081")
         }
       }
     }
@@ -78,17 +80,18 @@ pipeline {
     stage('Deploy Prod') {
       when { branch 'main' }
       steps {
-        withCredentials([usernamePassword(credentialsId: 'acr-creds', usernameVariable: 'ACR_USER', passwordVariable: 'ACR_PASS')]) {
-          sshagent(credentials: ['deploy-ssh']) {
-            // login remotely
-            sh ('''echo "$ACR_PASS" | ssh -o StrictHostKeyChecking=no azureuser@''' + "${DEPLOY_IP}" + ''' docker login ''' + "${ACR}" + ''' -u "$ACR_USER" --password-stdin''')
-            // run the repo script on the remote host to pull and run the container
-            sh ('''ssh -o StrictHostKeyChecking=no azureuser@''' + "${DEPLOY_IP}" + ''' 'bash -s' < scripts/run_remote.sh ''' + "${APP}-prod ${IMAGE_SHA} 8080")
-            // healthcheck against the remote endpoint; if it fails the script exits non-zero
-            sh "scripts/health_check.sh http://${DEPLOY_IP}:8080/health"
-            // NOTE: run_remote.sh always pulls the image and starts the container. If you need previous-image rollback
-            // we can extend run_remote.sh to save/restore previous image name; keeping it simple for now.
-          }
+        withCredentials([
+          usernamePassword(credentialsId: 'acr-creds', usernameVariable: 'ACR_USER', passwordVariable: 'ACR_PASS'),
+          sshUserPrivateKey(credentialsId: 'deploy-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
+        ]) {
+          // login remotely (using the temporary key file created by withCredentials)
+          sh ('''echo "$ACR_PASS" | ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@''' + "${DEPLOY_IP}" + ''' docker login ''' + "${ACR}" + ''' -u "$ACR_USER" --password-stdin''')
+          // run the repo script on the remote host to pull and run the container
+          sh ('''ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@''' + "${DEPLOY_IP}" + ''' 'bash -s' < scripts/run_remote.sh ''' + "${APP}-prod ${IMAGE_SHA} 8080")
+          // healthcheck against the remote endpoint; if it fails the script exits non-zero
+          sh "scripts/health_check.sh http://${DEPLOY_IP}:8080/health"
+          // NOTE: run_remote.sh always pulls the image and starts the container. If you need previous-image rollback
+          // we can extend run_remote.sh to save/restore previous image name; keeping it simple for now.
         }
       }
     }
