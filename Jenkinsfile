@@ -67,7 +67,7 @@ pipeline {
     }
 
     stage('Healthcheck Staging') {
-      steps { sh "scripts/health_check.sh http://${DEPLOY_IP}:8081/health" }
+      steps { sh "bash scripts/health_check.sh http://${DEPLOY_IP}:8081/health" }
     }
 
     stage('Promote') {
@@ -89,7 +89,7 @@ pipeline {
           // run the repo script on the remote host to pull and run the container
           sh ('''ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@''' + "${DEPLOY_IP}" + ''' 'bash -s' < scripts/run_remote.sh ''' + "${APP}-prod ${IMAGE_SHA} 8080")
           // healthcheck against the remote endpoint; if it fails the script exits non-zero
-          sh "scripts/health_check.sh http://${DEPLOY_IP}:8080/health"
+          sh "bash scripts/health_check.sh http://${DEPLOY_IP}:8080/health"
           // NOTE: run_remote.sh always pulls the image and starts the container. If you need previous-image rollback
           // we can extend run_remote.sh to save/restore previous image name; keeping it simple for now.
         }
