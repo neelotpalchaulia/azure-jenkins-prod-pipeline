@@ -41,7 +41,10 @@ pipeline {
     stage('Push') {
       steps {
         withCredentials([usernamePassword(credentialsId: 'acr-creds', usernameVariable: 'ACR_USER', passwordVariable: 'ACR_PASS')]) {
-          // push images to ACR first, then instruct the remote host to pull the new image
+          // authenticate to ACR, push images, then instruct remote host to pull the new image
+          sh '''
+            echo "$ACR_PASS" | docker login ${ACR} -u "$ACR_USER" --password-stdin
+          '''
           sh "docker push ${IMAGE_SHA} && docker push ${IMAGE_LATEST}"
           // remote login and pull the image we just pushed
           sh ('''echo "$ACR_PASS" | ssh -o StrictHostKeyChecking=no azureuser@''' + "${DEPLOY_IP}" + ''' docker login ''' + "${ACR}" + ''' -u "$ACR_USER" --password-stdin && ssh -o StrictHostKeyChecking=no azureuser@''' + "${DEPLOY_IP}" + ''' docker pull ''' + "${IMAGE_SHA}")
