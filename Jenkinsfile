@@ -25,9 +25,18 @@ pipeline {
       post { always { archiveArtifacts artifacts: 'fmt.out,test.out', onlyIfSuccessful: false } }
     }
 
-    stage('Build') { steps { sh "docker build -t ${IMAGE_SHA} -t ${IMAGE_LATEST} ." } }
+    stage('Build') {
+      steps { sh "docker build -t ${IMAGE_SHA} -t ${IMAGE_LATEST} ." }
+    }
 
-    stage('Scan') { steps { sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${IMAGE_SHA} | tee trivy.out" }; post { always { archiveArtifacts artifacts: 'trivy.out', onlyIfSuccessful: false } } }
+    stage('Scan') {
+      steps {
+        sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${IMAGE_SHA} | tee trivy.out"
+      }
+      post {
+        always { archiveArtifacts artifacts: 'trivy.out', onlyIfSuccessful: false }
+      }
+    }
 
     stage('Push') {
       steps {
@@ -51,9 +60,16 @@ pipeline {
       }
     }
 
-    stage('Healthcheck Staging') { steps { sh "scripts/health_check.sh http://${DEPLOY_IP}:8081/health" } }
+    stage('Healthcheck Staging') {
+      steps { sh "scripts/health_check.sh http://${DEPLOY_IP}:8081/health" }
+    }
 
-    stage('Promote') { when { branch 'main' } steps { input message: 'Promote to production?', ok: 'Yes' } }
+    stage('Promote') {
+      when { branch 'main' }
+      steps {
+        input message: 'Promote to production?', ok: 'Yes'
+      }
+    }
 
     stage('Deploy Prod') {
       when { branch 'main' }
