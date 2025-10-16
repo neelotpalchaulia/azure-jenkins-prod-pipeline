@@ -74,7 +74,7 @@ pipeline {
           sshagent(credentials: ['deploy-ssh']) {
             sh """
               ssh -o StrictHostKeyChecking=no azureuser@${DEPLOY_IP} '
-                echo "$ACR_PASS" | docker login ${ACR} -u "$ACR_USER" --password-stdin &&
+                echo "\$ACR_PASS" | docker login ${ACR} -u "\$ACR_USER" --password-stdin &&
                 docker pull ${IMAGE_SHA} &&
                 docker rm -f ${APP}-staging || true &&
                 docker run -d --name ${APP}-staging -p 8081:8080 ${IMAGE_SHA}
@@ -106,7 +106,7 @@ pipeline {
               ssh -o StrictHostKeyChecking=no azureuser@${DEPLOY_IP} '
                 set -e
                 prev=$(docker inspect -f "{{.Config.Image}}" ${APP}-prod 2>/dev/null || true)
-                echo "$ACR_PASS" | docker login ${ACR} -u "$ACR_USER" --password-stdin
+                echo "\$ACR_PASS" | docker login ${ACR} -u "\$ACR_USER" --password-stdin
                 docker pull ${IMAGE_SHA}
                 docker rm -f ${APP}-prod || true
                 docker run -d --name ${APP}-prod -p 8080:8080 ${IMAGE_SHA}
@@ -115,11 +115,11 @@ pipeline {
                   curl -fsS http://localhost:8080/health && ok=1 && break || true
                   sleep 3
                 done
-                if [ "$ok" != "1" ]; then
+                if [ "\$ok" != "1" ]; then
                   echo "Prod health failed. Rolling back…"
                   if [ -n "$prev" ]; then
                     docker rm -f ${APP}-prod || true
-                    docker run -d --name ${APP}-prod -p 8080:8080 "$prev"
+                    docker run -d --name ${APP}-prod -p 8080:8080 "\$prev"
                   fi
                   exit 1
                 fi
