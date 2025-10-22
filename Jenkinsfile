@@ -1,6 +1,12 @@
 pipeline {
   agent any
 
+  parameters {
+    booleanParam(name: 'SONAR_ENABLED', defaultValue: true, description: 'Run SonarQube analysis')
+    string(name: 'SONAR_HOST', defaultValue: 'http://sonar.example.com', description: 'SonarQube server URL (self-hosted)')
+    string(name: 'SONAR_PROJECT_KEY', defaultValue: 'myorg_myapp', description: 'Sonar project key')
+  }
+
   environment {
     APP = 'myapp'
     ACR = 'acrjenkinsxyz.azurecr.io'
@@ -27,6 +33,43 @@ pipeline {
 
     stage('Build') {
       steps { sh "docker build -t ${IMAGE_SHA} -t ${IMAGE_LATEST} ." }
+    }
+
+    stage('SonarQube') {
+      when { expression { return params.SONAR_ENABLED == true } }
+      steps {
+        // requires a Jenkins credential (Secret Text) with id 'sonar-token'
+        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+          // run the Sonar scanner CLI in Docker, write report-task.txt into workspace
+          sh ('''docker run --rm -v "$PWD":/usr/src -w /usr/src sonarsource/sonar-scanner-cli \
+            -Dsonar.projectKey=''' + "${params.SONAR_PROJECT_KEY}" + ''' \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=''' + "${params.SONAR_HOST}" + ''' \
+            -Dsonar.login=$SONAR_TOKEN
+
+          # ensure the scanner produced the task report
+          if [ ! -f .scannerwork/report-task.txt ]; then echo "Sonar report-task.txt missing"; exit 1; fi
+          CE_ID=$(grep '^ceTaskId=' .scannerwork/report-task.txt | cut -d'=' -f2)
+          if [ -z "$CE_ID" ]; then echo "Could not find ceTaskId in report-task.txt"; exit 1; fi
+
+          # poll the Sonar CE task until it finishes
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -u $SONAR_TOKEN: "${params.SONAR_HOST}/api/ce/task?id=$CE_ID" | grep -o '\"status\"\:\"[^\"]*\"' | sed -E 's/.*\"status\"\:\"([^\"]*)\".*/\1/')
+            echo "Sonar CE task status: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ]; then break; fi
+            if [ "$STATUS" = "FAILED" ]; then echo "Sonar CE task failed"; exit 1; fi
+            sleep 5
+          done
+
+          # get analysis id and check Quality Gate
+          ANALYSIS_ID=$(curl -s -u $SONAR_TOKEN: "${params.SONAR_HOST}/api/ce/task?id=$CE_ID" | grep -o '\"analysisId\"\:\"[^\"]*\"' | sed -E 's/.*\"analysisId\"\:\"([^\"]*)\".*/\1/')
+          if [ -z "$ANALYSIS_ID" ]; then echo "No analysisId found"; exit 1; fi
+          QG=$(curl -s -u $SONAR_TOKEN: "${params.SONAR_HOST}/api/qualitygates/project_status?analysisId=$ANALYSIS_ID" | grep -o '\"status\"\:\"[^\"]*\"' | sed -E 's/.*\"status\"\:\"([^\"]*)\".*/\1/')
+          echo "Sonar Quality Gate: $QG"
+          if [ "$QG" != "OK" ]; then echo "Quality Gate not OK: $QG"; exit 1; fi
+          ''' )
+        }
+      }
     }
 
     stage('Scan') {
